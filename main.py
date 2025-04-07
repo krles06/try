@@ -7,7 +7,7 @@ from PIL import Image
 import fitz  # PyMuPDF
 from io import BytesIO
 
-# API key desde secrets seguros
+# API key desde secrets
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 st.set_page_config(page_title="FacturaFlow AI + OCR", layout="wide")
@@ -27,8 +27,8 @@ campos_seleccionados = st.multiselect(
     default=campos_posibles
 )
 
-# Función robusta de extracción con OCR mejorado
-def extract_text(file):
+# Función de extracción con diagnóstico
+def extract_text(file, nombre_archivo):
     try:
         file_bytes = file.read()
         file_buffer = BytesIO(file_bytes)
@@ -41,26 +41,36 @@ def extract_text(file):
                 if page_text:
                     text += page_text + "\n"
         if text.strip():
+            st.info(f"📄 {nombre_archivo}: Texto extraído con pdfplumber")
+            st.text(text)
             return text
-    except:
-        pass
+    except Exception as e:
+        st.warning(f"⚠️ pdfplumber falló con {nombre_archivo}: {e}")
 
-    # Si no se extrajo texto, hacer OCR
+    # OCR
     try:
-        file_buffer = BytesIO(file_bytes)  # reiniciar buffer
+        file_buffer = BytesIO(file_bytes)
         doc = fitz.open(stream=file_buffer.read(), filetype="pdf")
         text = ""
         for page in doc:
             pix = page.get_pixmap(dpi=400)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            img = img.convert("L")  # escala de grises
-            img = img.point(lambda x: 0 if x < 180 else 255, '1')  # binarización
-            text += pytesseract.image_to_string(img, lang="spa") + "\n"
-        return text
-    except Exception:
+            img = img.convert("L")
+            img = img.point(lambda x: 0 if x < 180 else 255, '1')
+            texto_ocr = pytesseract.image_to_string(img, lang="spa")
+            text += texto_ocr + "\n"
+        if text.strip():
+            st.success(f"📷 {nombre_archivo}: Texto extraído con OCR")
+            st.text(text)
+            return text
+        else:
+            st.error(f"❌ {nombre_archivo}: OCR tampoco encontró texto.")
+            return None
+    except Exception as e:
+        st.error(f"❌ {nombre_archivo}: Error al hacer OCR: {e}")
         return None
 
-# Enviar a GPT
+# GPT parsing
 def parse_invoice_with_gpt(text, campos):
     prompt = f"""
 Ets un assistent que rep textos de factures i ha d’extreure la informació següent en format JSON:
@@ -83,7 +93,7 @@ Retorna només el JSON. Si falta algun camp, deixa'l en blanc.
     except Exception as e:
         return {"error": str(e)}
 
-# Procesamiento principal
+# Procesamiento
 if uploaded_files and campos_seleccionados:
     resultados = []
 
@@ -91,7 +101,7 @@ if uploaded_files and campos_seleccionados:
         for file in uploaded_files:
             nombre_archivo = file.name
             try:
-                text = extract_text(file)
+                text = extract_text(file, nombre_archivo)
                 if not text or text.strip() == "":
                     resultados.append({
                         "archivo": nombre_archivo,
