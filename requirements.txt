@@ -4,6 +4,6 @@ pandas
 pdfplumber
 python-dotenv
 openpyxl
-pytesseract
-pillow
+requests
+Pillow
 PyMuPDF

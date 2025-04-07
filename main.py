@@ -2,15 +2,16 @@ import streamlit as st
 import pdfplumber
 import pandas as pd
 import openai
-import pytesseract
+import requests
 from PIL import Image
 import fitz  # PyMuPDF
 from io import BytesIO
 
-# API key desde secrets
+# Cargar claves desde Streamlit Cloud
 openai.api_key = st.secrets["OPENAI_API_KEY"]
+ocr_api_key = st.secrets["OCR_API_KEY"]
 
-st.set_page_config(page_title="FacturaFlow AI + OCR", layout="wide")
+st.set_page_config(page_title="FacturaFlow AI OCR Online", layout="wide")
 st.title("📄 FacturaFlow AI - Extrae datos de facturas escaneadas o digitales")
 
 uploaded_files = st.file_uploader("Sube tus facturas en PDF", type="pdf", accept_multiple_files=True)
@@ -27,13 +28,29 @@ campos_seleccionados = st.multiselect(
     default=campos_posibles
 )
 
-# Función de extracción con diagnóstico
+# OCR con API de OCR.space
+def extract_text_via_ocrspace(image: Image.Image) -> str:
+    buffered = BytesIO()
+    image.save(buffered, format="PNG")
+    buffered.seek(0)
+
+    response = requests.post(
+        "https://api.ocr.space/parse/image",
+        files={"filename": buffered},
+        data={"apikey": ocr_api_key, "language": "spa", "OCREngine": "2"},
+    )
+
+    result = response.json()
+    if result.get("IsErroredOnProcessing"):
+        return None
+    return result["ParsedResults"][0]["ParsedText"]
+
+# Extraer texto de PDF: primero con pdfplumber, si no, usa OCR.space
 def extract_text(file, nombre_archivo):
     try:
         file_bytes = file.read()
         file_buffer = BytesIO(file_bytes)
 
-        # Intento con pdfplumber
         with pdfplumber.open(file_buffer) as pdf:
             text = ""
             for page in pdf.pages:
@@ -47,20 +64,18 @@ def extract_text(file, nombre_archivo):
     except Exception as e:
         st.warning(f"⚠️ pdfplumber falló con {nombre_archivo}: {e}")
 
-    # OCR
     try:
         file_buffer = BytesIO(file_bytes)
         doc = fitz.open(stream=file_buffer.read(), filetype="pdf")
         text = ""
         for page in doc:
-            pix = page.get_pixmap(dpi=400)
+            pix = page.get_pixmap(dpi=300)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            img = img.convert("L")
-            img = img.point(lambda x: 0 if x < 180 else 255, '1')
-            texto_ocr = pytesseract.image_to_string(img, lang="spa")
-            text += texto_ocr + "\n"
+            texto_ocr = extract_text_via_ocrspace(img)
+            if texto_ocr:
+                text += texto_ocr + "\n"
         if text.strip():
-            st.success(f"📷 {nombre_archivo}: Texto extraído con OCR")
+            st.success(f"📷 {nombre_archivo}: Texto extraído con OCR.space")
             st.text(text)
             return text
         else:
@@ -70,7 +85,7 @@ def extract_text(file, nombre_archivo):
         st.error(f"❌ {nombre_archivo}: Error al hacer OCR: {e}")
         return None
 
-# GPT parsing
+# GPT parser
 def parse_invoice_with_gpt(text, campos):
     prompt = f"""
 Ets un assistent que rep textos de factures i ha d’extreure la informació següent en format JSON:
