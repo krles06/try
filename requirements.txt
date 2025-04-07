@@ -2,4 +2,8 @@ streamlit
 openai
 pandas
 pdfplumber
+python-dotenv
 openpyxl
+pytesseract
+pillow
+PyMuPDF

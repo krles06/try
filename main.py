@@ -2,16 +2,20 @@ import streamlit as st
 import pdfplumber
 import pandas as pd
 import openai
+import pytesseract
+from PIL import Image
+import fitz  # PyMuPDF
+import io
 
-# Clave API desde secrets (Streamlit Cloud)
+# API key segura desde secrets
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-st.set_page_config(page_title="FacturaFlow AI", layout="wide")
-st.title("📄 FacturaFlow AI - Carga masiva y extracción inteligente de datos")
+st.set_page_config(page_title="FacturaFlow AI + OCR", layout="wide")
+st.title("📄 FacturaFlow AI - Extrae datos de facturas (PDF con o sin texto)")
 
-uploaded_files = st.file_uploader("Sube tus facturas en PDF", type="pdf", accept_multiple_files=True)
+uploaded_files = st.file_uploader("Sube tus facturas en PDF (escaneadas o digitales)", type="pdf", accept_multiple_files=True)
 
-# Campos posibles a extraer
+# Campos configurables
 campos_posibles = [
     "Proveedor", "CIF", "Número de factura",
     "Fecha", "Base imponible", "IVA", "Total"
@@ -23,7 +27,8 @@ campos_seleccionados = st.multiselect(
     default=campos_posibles
 )
 
-def extract_text_from_pdf(file):
+# Extraer texto: primero con pdfplumber, luego con OCR si falla
+def extract_text(file):
     try:
         with pdfplumber.open(file) as pdf:
             text = ""
@@ -31,8 +36,22 @@ def extract_text_from_pdf(file):
                 page_text = page.extract_text()
                 if page_text:
                     text += page_text + "\n"
+        if text.strip():
+            return text
+    except:
+        pass
+
+    # Si pdfplumber no pudo extraer texto, usar OCR
+    try:
+        text = ""
+        file.seek(0)
+        doc = fitz.open(stream=file.read(), filetype="pdf")
+        for page in doc:
+            pix = page.get_pixmap(dpi=300)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            text += pytesseract.image_to_string(img, lang="spa") + "\n"
         return text
-    except Exception:
+    except Exception as e:
         return None
 
 def parse_invoice_with_gpt(text, campos):
@@ -64,7 +83,7 @@ if uploaded_files and campos_seleccionados:
         for file in uploaded_files:
             nombre_archivo = file.name
             try:
-                text = extract_text_from_pdf(file)
+                text = extract_text(file)
                 if not text or text.strip() == "":
                     resultados.append({
                         "archivo": nombre_archivo,
@@ -95,14 +114,12 @@ if uploaded_files and campos_seleccionados:
                     **{campo: "" for campo in campos_seleccionados}
                 })
 
-    # Crear y mostrar tabla
     columnas_finales = ["archivo", "error"] + campos_seleccionados
     df = pd.DataFrame(resultados)
     df = df[columnas_finales]
     st.success("¡Facturas procesadas!")
     st.dataframe(df)
 
-    # Botón para descargar Excel
     excel_name = "facturas_exportadas.xlsx"
     df.to_excel(excel_name, index=False)
     with open(excel_name, "rb") as f:
