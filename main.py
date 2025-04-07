@@ -5,8 +5,9 @@ import openai
 import pytesseract
 from PIL import Image
 import fitz  # PyMuPDF
+from io import BytesIO
 
-# API key segura desde secrets
+# API key desde secrets seguros
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 st.set_page_config(page_title="FacturaFlow AI + OCR", layout="wide")
@@ -14,7 +15,7 @@ st.title("📄 FacturaFlow AI - Extrae datos de facturas escaneadas o digitales"
 
 uploaded_files = st.file_uploader("Sube tus facturas en PDF", type="pdf", accept_multiple_files=True)
 
-# Campos configurables
+# Selector de campos
 campos_posibles = [
     "Proveedor", "CIF", "Número de factura",
     "Fecha", "Base imponible", "IVA", "Total"
@@ -26,10 +27,14 @@ campos_seleccionados = st.multiselect(
     default=campos_posibles
 )
 
-# Extraer texto con PDFPlumber o con OCR mejorado
+# Función robusta de extracción con OCR mejorado
 def extract_text(file):
     try:
-        with pdfplumber.open(file) as pdf:
+        file_bytes = file.read()
+        file_buffer = BytesIO(file_bytes)
+
+        # Intento con pdfplumber
+        with pdfplumber.open(file_buffer) as pdf:
             text = ""
             for page in pdf.pages:
                 page_text = page.extract_text()
@@ -40,19 +45,19 @@ def extract_text(file):
     except:
         pass
 
-    # OCR con mejora de imagen
+    # Si no se extrajo texto, hacer OCR
     try:
+        file_buffer = BytesIO(file_bytes)  # reiniciar buffer
+        doc = fitz.open(stream=file_buffer.read(), filetype="pdf")
         text = ""
-        file.seek(0)
-        doc = fitz.open(stream=file.read(), filetype="pdf")
         for page in doc:
-            pix = page.get_pixmap(dpi=400)  # mayor calidad
+            pix = page.get_pixmap(dpi=400)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             img = img.convert("L")  # escala de grises
             img = img.point(lambda x: 0 if x < 180 else 255, '1')  # binarización
             text += pytesseract.image_to_string(img, lang="spa") + "\n"
         return text
-    except Exception as e:
+    except Exception:
         return None
 
 # Enviar a GPT
@@ -78,7 +83,7 @@ Retorna només el JSON. Si falta algun camp, deixa'l en blanc.
     except Exception as e:
         return {"error": str(e)}
 
-# Procesamiento
+# Procesamiento principal
 if uploaded_files and campos_seleccionados:
     resultados = []
 
