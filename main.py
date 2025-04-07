@@ -5,15 +5,14 @@ import openai
 import pytesseract
 from PIL import Image
 import fitz  # PyMuPDF
-import io
 
 # API key segura desde secrets
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 st.set_page_config(page_title="FacturaFlow AI + OCR", layout="wide")
-st.title("📄 FacturaFlow AI - Extrae datos de facturas (PDF con o sin texto)")
+st.title("📄 FacturaFlow AI - Extrae datos de facturas escaneadas o digitales")
 
-uploaded_files = st.file_uploader("Sube tus facturas en PDF (escaneadas o digitales)", type="pdf", accept_multiple_files=True)
+uploaded_files = st.file_uploader("Sube tus facturas en PDF", type="pdf", accept_multiple_files=True)
 
 # Campos configurables
 campos_posibles = [
@@ -27,7 +26,7 @@ campos_seleccionados = st.multiselect(
     default=campos_posibles
 )
 
-# Extraer texto: primero con pdfplumber, luego con OCR si falla
+# Extraer texto con PDFPlumber o con OCR mejorado
 def extract_text(file):
     try:
         with pdfplumber.open(file) as pdf:
@@ -41,19 +40,22 @@ def extract_text(file):
     except:
         pass
 
-    # Si pdfplumber no pudo extraer texto, usar OCR
+    # OCR con mejora de imagen
     try:
         text = ""
         file.seek(0)
         doc = fitz.open(stream=file.read(), filetype="pdf")
         for page in doc:
-            pix = page.get_pixmap(dpi=300)
+            pix = page.get_pixmap(dpi=400)  # mayor calidad
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            img = img.convert("L")  # escala de grises
+            img = img.point(lambda x: 0 if x < 180 else 255, '1')  # binarización
             text += pytesseract.image_to_string(img, lang="spa") + "\n"
         return text
     except Exception as e:
         return None
 
+# Enviar a GPT
 def parse_invoice_with_gpt(text, campos):
     prompt = f"""
 Ets un assistent que rep textos de factures i ha d’extreure la informació següent en format JSON:
@@ -76,6 +78,7 @@ Retorna només el JSON. Si falta algun camp, deixa'l en blanc.
     except Exception as e:
         return {"error": str(e)}
 
+# Procesamiento
 if uploaded_files and campos_seleccionados:
     resultados = []
 
